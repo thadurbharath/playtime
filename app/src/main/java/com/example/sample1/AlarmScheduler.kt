@@ -24,6 +24,8 @@ class AlarmScheduler(private val context: Context) {
             // Set to current date initially
             set(Calendar.YEAR, now.get(Calendar.YEAR))
             set(Calendar.DAY_OF_YEAR, now.get(Calendar.DAY_OF_YEAR))
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
             
             // If the set time is in the past for today, move it forward
             if (before(now)) {
@@ -66,7 +68,10 @@ class AlarmScheduler(private val context: Context) {
             putExtra("songUris", songUris)
             putExtra("songTitles", songTitles)
             putExtra("playlistName", playlist.name)
-            putExtra("playlistId", playlist.id) // Pass ID to reschedule
+            putExtra("playlistId", playlist.id)
+            putExtra("repeatMode", playlist.repeatMode)
+            putExtra("daysOfWeek", playlist.daysOfWeek)
+            putExtra("alarmTime", playlist.alarmTime)
         }
 
         val pendingIntent = PendingIntent.getBroadcast(

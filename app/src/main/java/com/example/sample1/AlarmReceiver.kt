@@ -15,8 +15,29 @@ class AlarmReceiver : BroadcastReceiver() {
         val songTitles = intent.getStringArrayExtra("songTitles")
         val playlistName = intent.getStringExtra("playlistName") ?: "Alarm"
         val playlistId = intent.getIntExtra("playlistId", -1)
+        val repeatMode = intent.getIntExtra("repeatMode", 0)
+        val daysOfWeek = intent.getStringExtra("daysOfWeek") ?: ""
+        val alarmTime = intent.getLongExtra("alarmTime", 0L)
         
-        Log.d("AlarmReceiver", "Alarm received for $playlistName")
+        Log.d("AlarmReceiver", "Alarm received for $playlistName (Repeat: $repeatMode)")
+
+        // Reschedule if repeating
+        if (repeatMode > 0) {
+            val scheduler = AlarmScheduler(context)
+            val songs = if (songUris != null && songTitles != null) {
+                songUris.indices.map { i -> Song(uri = songUris[i], title = songTitles[i], playlistId = playlistId) }
+            } else emptyList()
+            
+            val playlist = Playlist(
+                id = playlistId,
+                name = playlistName,
+                alarmTime = alarmTime,
+                isEnabled = true,
+                repeatMode = repeatMode,
+                daysOfWeek = daysOfWeek
+            )
+            scheduler.schedule(PlaylistWithSongs(playlist, songs))
+        }
 
         val serviceIntent = Intent(context, MusicService::class.java).apply {
             putExtra("songUris", songUris)

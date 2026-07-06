@@ -50,6 +50,7 @@ import androidx.media3.session.SessionToken
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.sample1.ui.theme.Sample1Theme
@@ -75,6 +76,9 @@ fun MainNavigation() {
     val navController = rememberNavController()
     val viewModel: PlaylistViewModel = viewModel()
     val context = LocalContext.current
+    
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
 
     // MediaController state (Shared across screens)
     var controller by remember { mutableStateOf<Player?>(null) }
@@ -127,9 +131,16 @@ fun MainNavigation() {
         }
     }
 
+    // Auto-exit player screen if music stops
+    LaunchedEffect(currentSongTitle, controller) {
+        if (currentRoute == "player" && (controller == null || currentSongTitle.isEmpty())) {
+            navController.popBackStack("list", inclusive = false)
+        }
+    }
+
     Scaffold(
         bottomBar = {
-            if (controller != null && (isPlaying || currentSongTitle.isNotEmpty())) {
+            if (currentRoute != "player" && controller != null && (isPlaying || currentSongTitle.isNotEmpty())) {
                 PlayerControlBar(
                     title = currentSongTitle,
                     isPlaying = isPlaying,
@@ -141,12 +152,11 @@ fun MainNavigation() {
                     onStop = {
                         val intent = Intent(context, MusicService::class.java).apply { action = "STOP" }
                         context.startService(intent)
-                        isPlaying = false
-                        currentSongTitle = ""
                     },
                     onNext = { controller?.seekToNext() },
                     onPrevious = { controller?.seekToPrevious() },
-                    onSeek = { controller?.seekTo(it) }
+                    onSeek = { controller?.seekTo(it) },
+                    onMaximize = { navController.navigate("player") }
                 )
             }
         }
@@ -172,6 +182,24 @@ fun MainNavigation() {
                     viewModel = viewModel,
                     playlistId = playlistId,
                     onBack = { navController.popBackStack() }
+                )
+            }
+            composable("player") {
+                PlayerScreen(
+                    title = currentSongTitle,
+                    isPlaying = isPlaying,
+                    position = position,
+                    duration = duration,
+                    onPlayPause = { if (isPlaying) controller?.pause() else controller?.play() },
+                    onNext = { controller?.seekToNext() },
+                    onPrevious = { controller?.seekToPrevious() },
+                    onSeek = { controller?.seekTo(it) },
+                    onStop = {
+                        val intent = Intent(context, MusicService::class.java).apply { action = "STOP" }
+                        context.startService(intent)
+                        navController.popBackStack()
+                    },
+                    onMinimize = { navController.popBackStack() }
                 )
             }
         }
@@ -589,10 +617,11 @@ fun PlayerControlBar(
     onStop: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
-    onSeek: (Long) -> Unit
+    onSeek: (Long) -> Unit,
+    onMaximize: () -> Unit
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable { onMaximize() },
         color = MaterialTheme.colorScheme.secondaryContainer,
         tonalElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
@@ -614,6 +643,9 @@ fun PlayerControlBar(
                     Text(text = "${formatTime(position)} / ${formatTime(duration)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onMaximize, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Fullscreen, null, modifier = Modifier.size(24.dp))
+                    }
                     IconButton(onClick = onPrevious, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.SkipPrevious, null, modifier = Modifier.size(24.dp))
                     }
@@ -638,6 +670,86 @@ fun PlayerControlBar(
                     activeTrackColor = MaterialTheme.colorScheme.primary
                 )
             )
+        }
+    }
+}
+
+@Composable
+fun PlayerScreen(
+    title: String,
+    isPlaying: Boolean,
+    position: Long,
+    duration: Long,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onStop: () -> Unit,
+    onMinimize: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onMinimize) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Minimize", modifier = Modifier.size(32.dp))
+                }
+                IconButton(onClick = onStop) {
+                    Icon(Icons.Default.Close, contentDescription = "Stop", modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.error)
+                }
+            }
+
+            Box(
+                modifier = Modifier.size(280.dp).clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.MusicNote, null, modifier = Modifier.size(120.dp), tint = MaterialTheme.colorScheme.primary)
+            }
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(text = title.ifEmpty { "Unknown Song" }, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(text = "Now Playing", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.secondary)
+            }
+
+            Column {
+                Slider(
+                    value = if (duration > 0) position.toFloat() / duration.toFloat() else 0f,
+                    onValueChange = { onSeek((it * duration).toLong()) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary, activeTrackColor = MaterialTheme.colorScheme.primary)
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(text = formatTime(position), style = MaterialTheme.typography.labelMedium)
+                    Text(text = formatTime(duration), style = MaterialTheme.typography.labelMedium)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onPrevious, modifier = Modifier.size(64.dp)) {
+                    Icon(Icons.Default.SkipPrevious, null, modifier = Modifier.size(48.dp))
+                }
+                IconButton(onClick = onPlayPause, modifier = Modifier.size(80.dp)) {
+                    Icon(if (isPlaying) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled, null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = onNext, modifier = Modifier.size(64.dp)) {
+                    Icon(Icons.Default.SkipNext, null, modifier = Modifier.size(48.dp))
+                }
+            }
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
