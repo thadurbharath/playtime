@@ -235,7 +235,7 @@ fun PlaylistListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("My Melodies", fontWeight = FontWeight.ExtraBold) },
+                title = { Text("PlayTime", fontWeight = FontWeight.ExtraBold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.primary

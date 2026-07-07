@@ -57,12 +57,5 @@ class AlarmReceiver : BroadcastReceiver() {
         
         // Always use startForegroundService for Alarms on Android 8+
         ContextCompat.startForegroundService(context, serviceIntent)
-
-        // Launch full-screen activity
-        val activityIntent = Intent(context, AlarmActivity::class.java).apply {
-            putExtra("playlistName", playlistName)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        context.startActivity(activityIntent)
     }
 }

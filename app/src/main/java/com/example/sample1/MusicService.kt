@@ -90,10 +90,8 @@ class MusicService : MediaSessionService() {
 
         // Always show a notification if started by alarm or if playing
         val isFromAlarm = intent?.action == "START_FROM_ALARM"
-        val playlistName = intent?.getStringExtra("playlistName") ?: "My Melody"
+        val playlistName = intent?.getStringExtra("playlistName") ?: "PlayTime"
         
-        updateNotification(isFromAlarm, playlistName)
-
         val uris = intent?.getStringArrayExtra("songUris")
         val titles = intent?.getStringArrayExtra("songTitles")
         val startIndex = intent?.getIntExtra("startIndex", 0) ?: 0
@@ -124,6 +122,9 @@ class MusicService : MediaSessionService() {
             exoPlayer.play()
         }
         
+        // Update notification after player state might have changed (for song title)
+        updateNotification(isFromAlarm, playlistName)
+        
         return super.onStartCommand(intent, flags, startId)
     }
 
@@ -136,9 +137,9 @@ class MusicService : MediaSessionService() {
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(if (isFromAlarm) "Alarm: $playlistName" else "Now Playing")
-            .setContentText(if (isFromAlarm) "Playing your wake-up playlist" else exoPlayer.currentMediaItem?.mediaMetadata?.title ?: "Enjoy your music")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentTitle(if (isFromAlarm) "Scheduled Playlist: $playlistName" else "PlayTime")
+            .setContentText(exoPlayer.currentMediaItem?.mediaMetadata?.title ?: "Enjoy your music")
+            .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
