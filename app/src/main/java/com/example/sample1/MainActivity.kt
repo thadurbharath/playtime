@@ -86,6 +86,8 @@ fun MainNavigation() {
     var currentSongTitle by remember { mutableStateOf("") }
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
+    var shuffleModeEnabled by remember { mutableStateOf(false) }
+    var repeatMode by remember { mutableIntStateOf(Player.REPEAT_MODE_OFF) }
 
     DisposableEffect(context) {
         val sessionToken = SessionToken(context, ComponentName(context, MusicService::class.java))
@@ -101,6 +103,12 @@ fun MainNavigation() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 duration = controller?.duration?.coerceAtLeast(0L) ?: 0L
             }
+            override fun onShuffleModeEnabledChanged(enabled: Boolean) {
+                shuffleModeEnabled = enabled
+            }
+            override fun onRepeatModeChanged(mode: Int) {
+                repeatMode = mode
+            }
         }
 
         controllerFuture.addListener({
@@ -110,6 +118,8 @@ fun MainNavigation() {
                 isPlaying = mediaController.isPlaying
                 currentSongTitle = mediaController.mediaMetadata.title?.toString() ?: ""
                 duration = mediaController.duration.coerceAtLeast(0L)
+                shuffleModeEnabled = mediaController.shuffleModeEnabled
+                repeatMode = mediaController.repeatMode
                 mediaController.addListener(listener)
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to connect to MediaController", e)
@@ -146,6 +156,8 @@ fun MainNavigation() {
                     isPlaying = isPlaying,
                     position = position,
                     duration = duration,
+                    shuffleModeEnabled = shuffleModeEnabled,
+                    repeatMode = repeatMode,
                     onPlayPause = {
                         if (isPlaying) controller?.pause() else controller?.play()
                     },
@@ -156,6 +168,15 @@ fun MainNavigation() {
                     onNext = { controller?.seekToNext() },
                     onPrevious = { controller?.seekToPrevious() },
                     onSeek = { controller?.seekTo(it) },
+                    onShuffleToggle = { controller?.shuffleModeEnabled = !shuffleModeEnabled },
+                    onRepeatToggle = {
+                        val nextMode = when (repeatMode) {
+                            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                            else -> Player.REPEAT_MODE_OFF
+                        }
+                        controller?.repeatMode = nextMode
+                    },
                     onMaximize = { navController.navigate("player") }
                 )
             }
@@ -190,10 +211,21 @@ fun MainNavigation() {
                     isPlaying = isPlaying,
                     position = position,
                     duration = duration,
+                    shuffleModeEnabled = shuffleModeEnabled,
+                    repeatMode = repeatMode,
                     onPlayPause = { if (isPlaying) controller?.pause() else controller?.play() },
                     onNext = { controller?.seekToNext() },
                     onPrevious = { controller?.seekToPrevious() },
                     onSeek = { controller?.seekTo(it) },
+                    onShuffleToggle = { controller?.shuffleModeEnabled = !shuffleModeEnabled },
+                    onRepeatToggle = {
+                        val nextMode = when (repeatMode) {
+                            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                            else -> Player.REPEAT_MODE_OFF
+                        }
+                        controller?.repeatMode = nextMode
+                    },
                     onStop = {
                         val intent = Intent(context, MusicService::class.java).apply { action = "STOP" }
                         context.startService(intent)
@@ -613,11 +645,15 @@ fun PlayerControlBar(
     isPlaying: Boolean,
     position: Long,
     duration: Long,
+    shuffleModeEnabled: Boolean,
+    repeatMode: Int,
     onPlayPause: () -> Unit,
     onStop: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
+    onShuffleToggle: () -> Unit,
+    onRepeatToggle: () -> Unit,
     onMaximize: () -> Unit
 ) {
     Surface(
@@ -643,6 +679,26 @@ fun PlayerControlBar(
                     Text(text = "${formatTime(position)} / ${formatTime(duration)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onShuffleToggle, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            if (shuffleModeEnabled) Icons.Default.ShuffleOn else Icons.Default.Shuffle,
+                            null,
+                            modifier = Modifier.size(20.dp),
+                            tint = if (shuffleModeEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = onRepeatToggle, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            when (repeatMode) {
+                                Player.REPEAT_MODE_ONE -> Icons.Default.RepeatOne
+                                Player.REPEAT_MODE_ALL -> Icons.Default.RepeatOn
+                                else -> Icons.Default.Repeat
+                            },
+                            null,
+                            modifier = Modifier.size(20.dp),
+                            tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(onClick = onMaximize, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.Fullscreen, null, modifier = Modifier.size(24.dp))
                     }
@@ -680,10 +736,14 @@ fun PlayerScreen(
     isPlaying: Boolean,
     position: Long,
     duration: Long,
+    shuffleModeEnabled: Boolean,
+    repeatMode: Int,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
+    onShuffleToggle: () -> Unit,
+    onRepeatToggle: () -> Unit,
     onStop: () -> Unit,
     onMinimize: () -> Unit
 ) {
@@ -710,7 +770,11 @@ fun PlayerScreen(
             }
 
             Box(
-                modifier = Modifier.size(280.dp).clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+                modifier = Modifier.size(280.dp).clip(RoundedCornerShape(24.dp)).background(
+                    Brush.verticalGradient(
+                        listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.secondaryContainer)
+                    )
+                ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Default.MusicNote, null, modifier = Modifier.size(120.dp), tint = MaterialTheme.colorScheme.primary)
@@ -739,14 +803,37 @@ fun PlayerScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onPrevious, modifier = Modifier.size(64.dp)) {
-                    Icon(Icons.Default.SkipPrevious, null, modifier = Modifier.size(48.dp))
+                IconButton(onClick = onShuffleToggle) {
+                    Icon(
+                        if (shuffleModeEnabled) Icons.Default.ShuffleOn else Icons.Default.Shuffle,
+                        contentDescription = "Shuffle",
+                        tint = if (shuffleModeEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onPrevious, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.SkipPrevious, null, modifier = Modifier.size(32.dp))
                 }
                 IconButton(onClick = onPlayPause, modifier = Modifier.size(80.dp)) {
-                    Icon(if (isPlaying) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled, null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        if (isPlaying) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
+                        null,
+                        modifier = Modifier.size(72.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
-                IconButton(onClick = onNext, modifier = Modifier.size(64.dp)) {
-                    Icon(Icons.Default.SkipNext, null, modifier = Modifier.size(48.dp))
+                IconButton(onClick = onNext, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.SkipNext, null, modifier = Modifier.size(32.dp))
+                }
+                IconButton(onClick = onRepeatToggle) {
+                    Icon(
+                        when (repeatMode) {
+                            Player.REPEAT_MODE_ONE -> Icons.Default.RepeatOne
+                            Player.REPEAT_MODE_ALL -> Icons.Default.RepeatOn
+                            else -> Icons.Default.Repeat
+                        },
+                        contentDescription = "Repeat",
+                        tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
             Spacer(Modifier.height(16.dp))
