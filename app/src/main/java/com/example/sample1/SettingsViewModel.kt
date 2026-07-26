@@ -98,12 +98,32 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             try {
                 _updateStatus.value = UpdateStatus.Downloading(0f)
                 val apkFile = withContext(Dispatchers.IO) {
-                    val url = URL(apkUrl)
-                    val conn = url.openConnection() as HttpURLConnection
-                    conn.connectTimeout = 10000
-                    conn.readTimeout = 10000
-                    
-                    val responseCode = conn.responseCode
+                    var currentUrl = apkUrl
+                    var conn: HttpURLConnection
+                    var responseCode: Int
+                    var redirects = 0
+                    val maxRedirects = 5
+
+                    // Handle redirects manually because GitHub redirects to objects.githubusercontent.com
+                    // which HttpURLConnection doesn't always follow across domains automatically.
+                    do {
+                        val url = URL(currentUrl)
+                        conn = url.openConnection() as HttpURLConnection
+                        conn.connectTimeout = 15000
+                        conn.readTimeout = 15000
+                        conn.instanceFollowRedirects = true
+                        
+                        responseCode = conn.responseCode
+                        if (responseCode in 301..308) {
+                            val newUrl = conn.getHeaderField("Location")
+                            conn.disconnect()
+                            currentUrl = newUrl
+                            redirects++
+                        } else {
+                            break
+                        }
+                    } while (redirects < maxRedirects)
+
                     if (responseCode != 200) {
                         throw Exception("Server returned code $responseCode. Check your APK URL on GitHub.")
                     }

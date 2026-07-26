@@ -365,6 +365,38 @@ fun MainNavigation(settingsViewModel: SettingsViewModel) {
             }
         }
     }
+
+    // Shared Add to Playlist Dialog (Placed here to be visible over any screen)
+    val selectedTrackForPlaylist by mediaViewModel.selectedTrackForPlaylist.collectAsState()
+    val playlists by playlistViewModel.playlists.collectAsState()
+
+    selectedTrackForPlaylist?.let { track ->
+        AlertDialog(
+            onDismissRequest = { mediaViewModel.selectedTrackForPlaylist.value = null },
+            title = { Text("Add to Playlist") },
+            text = {
+                if (playlists.isEmpty()) {
+                    Text("No playlists available. Create one first.")
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        items(playlists) { item ->
+                            ListItem(
+                                headlineContent = { Text(item.playlist.name) },
+                                supportingContent = { Text("${item.songs.size} songs") },
+                                modifier = Modifier.clickable {
+                                    playlistViewModel.addTrackToPlaylist(item, track)
+                                    mediaViewModel.selectedTrackForPlaylist.value = null
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { mediaViewModel.selectedTrackForPlaylist.value = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -535,10 +567,8 @@ fun TracksScreen(
     onQueueTrack: (AudioTrack) -> Unit
 ) {
     val tracks by mediaViewModel.filteredTracks.collectAsState()
-    val playlists by playlistViewModel.playlists.collectAsState()
     
     var selectedTrackForDetails by remember { mutableStateOf<AudioTrack?>(null) }
-    val selectedTrackForPlaylist by mediaViewModel.selectedTrackForPlaylist.collectAsState()
 
     if (tracks.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -623,34 +653,6 @@ fun TracksScreen(
             },
             confirmButton = {
                 TextButton(onClick = { selectedTrackForDetails = null }) { Text("Close") }
-            }
-        )
-    }
-
-    selectedTrackForPlaylist?.let { track ->
-        AlertDialog(
-            onDismissRequest = { mediaViewModel.selectedTrackForPlaylist.value = null },
-            title = { Text("Add to Playlist") },
-            text = {
-                if (playlists.isEmpty()) {
-                    Text("No playlists available. Create one first.")
-                } else {
-                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                        items(playlists) { item ->
-                            ListItem(
-                                headlineContent = { Text(item.playlist.name) },
-                                supportingContent = { Text("${item.songs.size} songs") },
-                                modifier = Modifier.clickable {
-                                    playlistViewModel.addTrackToPlaylist(item, track)
-                                    mediaViewModel.selectedTrackForPlaylist.value = null
-                                }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { mediaViewModel.selectedTrackForPlaylist.value = null }) { Text("Cancel") }
             }
         )
     }
