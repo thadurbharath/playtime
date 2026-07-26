@@ -11,7 +11,9 @@ data class Playlist(
     val id: Int = 0,
     val name: String,
     val alarmTime: Long = 0L,
+    val scheduledDate: Long = 0L, // 0 if not date-specific
     val isEnabled: Boolean = false,
+    val isAutoDelete: Boolean = false,
     val repeatMode: Int = 0, // 0: Once, 1: Daily, 2: Specific Days
     val daysOfWeek: String = "" // Comma-separated days like "1,2,3" (1=Sun, 7=Sat)
 )

@@ -24,13 +24,15 @@ class PlaylistViewModel(application: Application) : AndroidViewModel(application
         .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun addPlaylist(name: String, songs: List<Song>, alarmTime: Long, repeatMode: Int = 0, daysOfWeek: String = "") {
+    fun addPlaylist(name: String, songs: List<Song>, alarmTime: Long, repeatMode: Int = 0, daysOfWeek: String = "", scheduledDate: Long = 0L, isAutoDelete: Boolean = false) {
         viewModelScope.launch {
             try {
                 val playlist = Playlist(
                     name = name, 
                     alarmTime = alarmTime, 
+                    scheduledDate = scheduledDate,
                     isEnabled = true,
+                    isAutoDelete = isAutoDelete,
                     repeatMode = repeatMode,
                     daysOfWeek = daysOfWeek
                 )
@@ -82,5 +84,16 @@ class PlaylistViewModel(application: Application) : AndroidViewModel(application
             playlist = playlistWithSongs.playlist.copy(isEnabled = !playlistWithSongs.playlist.isEnabled)
         )
         updatePlaylist(updated)
+    }
+
+    var pendingTrack: Song? = null
+
+    fun addTrackToPlaylist(playlistWithSongs: PlaylistWithSongs, track: AudioTrack) {
+        val song = Song(
+            uri = track.uri,
+            title = track.title,
+            playlistId = playlistWithSongs.playlist.id
+        )
+        updatePlaylist(playlistWithSongs.copy(songs = playlistWithSongs.songs + song))
     }
 }

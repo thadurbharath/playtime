@@ -21,20 +21,30 @@ class AlarmScheduler(private val context: Context) {
         val scheduledTime = Calendar.getInstance().apply { 
             timeInMillis = playlist.alarmTime 
             
-            // Set to current date initially
-            set(Calendar.YEAR, now.get(Calendar.YEAR))
-            set(Calendar.DAY_OF_YEAR, now.get(Calendar.DAY_OF_YEAR))
+            if (playlist.scheduledDate > 0) {
+                // If a specific date is set, use it
+                val dateCal = Calendar.getInstance().apply { timeInMillis = playlist.scheduledDate }
+                set(Calendar.YEAR, dateCal.get(Calendar.YEAR))
+                set(Calendar.MONTH, dateCal.get(Calendar.MONTH))
+                set(Calendar.DAY_OF_MONTH, dateCal.get(Calendar.DAY_OF_MONTH))
+            } else {
+                // Set to current date initially
+                set(Calendar.YEAR, now.get(Calendar.YEAR))
+                set(Calendar.MONTH, now.get(Calendar.MONTH))
+                set(Calendar.DAY_OF_MONTH, now.get(Calendar.DAY_OF_MONTH))
+            }
+            
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
             
-            // If the set time is in the past for today, move it forward
-            if (before(now)) {
+            // If the set time is in the past, move it forward (only if not a specific fixed date)
+            if (before(now) && playlist.scheduledDate == 0L) {
                 add(Calendar.DAY_OF_YEAR, 1)
             }
         }
 
-        // Specific day logic
-        if (playlist.repeatMode == 2 && playlist.daysOfWeek.isNotEmpty()) {
+        // Specific day logic (only if not a specific fixed date)
+        if (playlist.scheduledDate == 0L && playlist.repeatMode == 2 && playlist.daysOfWeek.isNotEmpty()) {
             val enabledDays = playlist.daysOfWeek.split(",").map { it.toInt() }
             // Check next 7 days to find the next matching day
             var found = false
@@ -72,6 +82,7 @@ class AlarmScheduler(private val context: Context) {
             putExtra("repeatMode", playlist.repeatMode)
             putExtra("daysOfWeek", playlist.daysOfWeek)
             putExtra("alarmTime", playlist.alarmTime)
+            putExtra("isAutoDelete", playlist.isAutoDelete)
         }
 
         val pendingIntent = PendingIntent.getBroadcast(
@@ -89,9 +100,18 @@ class AlarmScheduler(private val context: Context) {
         )
         
         val alarmClockInfo = AlarmManager.AlarmClockInfo(scheduledTime.timeInMillis, showPendingIntent)
-        alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
         
-        Log.d("AlarmScheduler", "Scheduled Alarm for ${playlist.name} at ${scheduledTime.time}")
+        try {
+            // setAlarmClock is generally the most precise, but on some MIUI versions,
+            // adding setExactAndAllowWhileIdle as a backup or ensuring it's used is helpful.
+            // However, setAlarmClock implicitly works like setExactAndAllowWhileIdle.
+            alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+            
+            // Log for debugging
+            Log.d("AlarmScheduler", "Scheduled Alarm for ${playlist.name} at ${scheduledTime.time} (Exact)")
+        } catch (e: SecurityException) {
+            Log.e("AlarmScheduler", "SecurityException: Cannot schedule exact alarm", e)
+        }
     }
 
     fun cancel(playlistWithSongs: PlaylistWithSongs) {
