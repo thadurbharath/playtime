@@ -834,6 +834,10 @@ fun PlaylistEditScreen(
         mutableStateOf(existing?.playlist?.daysOfWeek?.split(",")?.filter { it.isNotEmpty() }?.map { it.toInt() }?.toSet() ?: emptySet()) 
     }
 
+    var showOnlineDialog by remember { mutableStateOf(false) }
+    var onlineTitle by remember { mutableStateOf("") }
+    var onlineUrl by remember { mutableStateOf("") }
+
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -910,7 +914,7 @@ fun PlaylistEditScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Timer, null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("Alarm Schedule", style = MaterialTheme.typography.titleMedium)
+                        Text("Schedule Timer", style = MaterialTheme.typography.titleMedium)
                     }
                     Spacer(Modifier.height(16.dp))
                     Button(
@@ -918,7 +922,7 @@ fun PlaylistEditScreen(
                             TimePickerDialog(context, { _, h, m ->
                                 val cal = Calendar.getInstance().apply {
                                     set(Calendar.HOUR_OF_DAY, h); set(Calendar.MINUTE, m); set(Calendar.SECOND, 0)
-                                    // Initial scheduling will be handled by AlarmScheduler
+                                    // Initial scheduling will be handled by TimerScheduler
                                 }
                                 selectedCalendar = cal
                             }, selectedCalendar.get(Calendar.HOUR_OF_DAY), selectedCalendar.get(Calendar.MINUTE), false).show()
@@ -952,7 +956,7 @@ fun PlaylistEditScreen(
                     
                     Text("Repeat", style = MaterialTheme.typography.labelLarge)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("Once", "Daily", "Days").forEachIndexed { index, label ->
+                        listOf("One-time", "Daily", "Days").forEachIndexed { index, label ->
                             FilterChip(
                                 selected = repeatMode == index,
                                 onClick = { repeatMode = index },
@@ -1016,8 +1020,13 @@ fun PlaylistEditScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Songs (${selectedSongs.size})", style = MaterialTheme.typography.titleMedium)
-                    IconButton(onClick = { launcher.launch(arrayOf("audio/*")) }) {
-                        Icon(Icons.Default.AddCircle, null, tint = MaterialTheme.colorScheme.primary)
+                    Row {
+                        IconButton(onClick = { showOnlineDialog = true }) {
+                            Icon(Icons.Default.Link, null, tint = MaterialTheme.colorScheme.secondary)
+                        }
+                        IconButton(onClick = { launcher.launch(arrayOf("audio/*")) }) {
+                            Icon(Icons.Default.AddCircle, null, tint = MaterialTheme.colorScheme.primary)
+                        }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -1057,7 +1066,30 @@ fun PlaylistEditScreen(
                                 .padding(vertical = 4.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.MusicNote, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary)
+                            val isOnline = song.uri.startsWith("http")
+                            if (isOnline) {
+                                val youtubeId = remember(song.uri) {
+                                    when {
+                                        song.uri.contains("v=") -> song.uri.substringAfter("v=").substringBefore("&").substringBefore("?")
+                                        song.uri.contains("youtu.be/") -> song.uri.substringAfter("youtu.be/").substringBefore("?").substringBefore("&")
+                                        song.uri.contains("/shorts/") -> song.uri.substringAfter("/shorts/").substringBefore("?").substringBefore("&")
+                                        song.uri.contains("/embed/") -> song.uri.substringAfter("/embed/").substringBefore("?").substringBefore("&")
+                                        else -> null
+                                    }
+                                }
+                                if (youtubeId != null && youtubeId.length >= 11) {
+                                    androidx.compose.foundation.Image(
+                                        painter = coil.compose.rememberAsyncImagePainter("https://img.youtube.com/vi/$youtubeId/hqdefault.jpg"),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                } else {
+                                    Icon(Icons.Default.Link, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                }
+                            } else {
+                                Icon(Icons.Default.MusicNote, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary)
+                            }
                             Spacer(Modifier.width(8.dp))
                             Text(song.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             IconButton(onClick = { selectedSongs = selectedSongs - song }, modifier = Modifier.size(32.dp)) {
@@ -1067,6 +1099,59 @@ fun PlaylistEditScreen(
                     }
                 }
             }
+        }
+
+        if (showOnlineDialog) {
+            AlertDialog(
+                onDismissRequest = { showOnlineDialog = false },
+                title = { Text("Add Online Music") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Enter the direct URL of the music file or stream.", style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = onlineTitle,
+                            onValueChange = { onlineTitle = it },
+                            label = { Text("Song Title (Optional)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = onlineUrl,
+                            onValueChange = { onlineUrl = it },
+                            label = { Text("URL (http/https)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            if (onlineUrl.isNotBlank()) {
+                                val title = if (onlineTitle.isBlank()) {
+                                    onlineUrl.substringAfterLast("/").substringBefore("?").ifEmpty { "Online Song" }
+                                } else onlineTitle
+                                
+                                val newSong = Song(
+                                    uri = onlineUrl,
+                                    title = title,
+                                    playlistId = if (playlistId == -1) 0 else playlistId
+                                )
+                                selectedSongs = selectedSongs + newSong
+                                onlineTitle = ""
+                                onlineUrl = ""
+                                showOnlineDialog = false
+                            }
+                        },
+                        enabled = onlineUrl.isNotBlank()
+                    ) {
+                        Text("ADD")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showOnlineDialog = false }) { Text("Cancel") }
+                }
+            )
         }
     }
 }
@@ -1101,10 +1186,10 @@ fun AlarmCard(
                     val repeatText = when(playlist.repeatMode) {
                         1 -> "Daily"
                         2 -> "Custom Days"
-                        else -> "Once"
+                        else -> "One-time"
                     }
                     val autoDeleteText = if (playlist.isAutoDelete) " • Auto-Delete" else ""
-                    Text("Alarm: $timeString ($repeatText$autoDeleteText)", style = MaterialTheme.typography.bodySmall)
+                    Text("Time: $timeString ($repeatText$autoDeleteText)", style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(checked = playlist.isEnabled, onCheckedChange = { onToggle() })
             }
@@ -1119,7 +1204,30 @@ fun AlarmCard(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onPlaySong(index) }.padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.PlayCircle, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    val isOnline = song.uri.startsWith("http")
+                    if (isOnline) {
+                        val youtubeId = remember(song.uri) {
+                            when {
+                                song.uri.contains("v=") -> song.uri.substringAfter("v=").substringBefore("&").substringBefore("?")
+                                song.uri.contains("youtu.be/") -> song.uri.substringAfter("youtu.be/").substringBefore("?").substringBefore("&")
+                                song.uri.contains("/shorts/") -> song.uri.substringAfter("/shorts/").substringBefore("?").substringBefore("&")
+                                song.uri.contains("/embed/") -> song.uri.substringAfter("/embed/").substringBefore("?").substringBefore("&")
+                                else -> null
+                            }
+                        }
+                        if (youtubeId != null && youtubeId.length >= 11) {
+                            androidx.compose.foundation.Image(
+                                painter = coil.compose.rememberAsyncImagePainter("https://img.youtube.com/vi/$youtubeId/hqdefault.jpg"),
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp).clip(RoundedCornerShape(4.dp)),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                            )
+                        } else {
+                            Icon(Icons.Default.Link, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                        }
+                    } else {
+                        Icon(Icons.Default.PlayCircle, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
                     Spacer(Modifier.width(8.dp))
                     Text(song.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -1392,7 +1500,7 @@ fun CalendarScreen(
             } else if (item.playlist.repeatMode == 2) { // Specific Days
                 val dayNum = date.get(Calendar.DAY_OF_WEEK)
                 item.playlist.daysOfWeek.split(",").contains(dayNum.toString())
-            } else { // Once
+            } else { // One-time
                 cal.get(Calendar.YEAR) == date.get(Calendar.YEAR) &&
                 cal.get(Calendar.DAY_OF_YEAR) == date.get(Calendar.DAY_OF_YEAR)
             }
@@ -1469,7 +1577,7 @@ fun CalendarScreen(
                                         1 -> "Daily at ${timeFormat.format(Date(item.playlist.alarmTime))}"
                                         2 -> "Custom Days at ${timeFormat.format(Date(item.playlist.alarmTime))}"
                                         else -> {
-                                            val datePart = if (item.playlist.scheduledDate > 0) dateFormat.format(Date(item.playlist.scheduledDate)) else "Once"
+                                            val datePart = if (item.playlist.scheduledDate > 0) dateFormat.format(Date(item.playlist.scheduledDate)) else "One-time"
                                             "$datePart at ${timeFormat.format(Date(item.playlist.alarmTime))}"
                                         }
                                     }
@@ -1577,7 +1685,7 @@ fun SettingsScreen(
                 )
 
                 ListItem(
-                    headlineContent = { Text("Sunrise Alarm (Fade-in)") },
+                    headlineContent = { Text("Sunrise Mode (Fade-in)") },
                     supportingContent = { Text("Slowly increase volume over 30 seconds") },
                     trailingContent = { Switch(checked = fadeInEnabled, onCheckedChange = { viewModel.toggleFadeIn(it) }) }
                 )

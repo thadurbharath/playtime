@@ -7,19 +7,19 @@ PlayTime is a smart music player designed for scheduled playback. It allows user
 
 ## 2. Key Features
 ### 2.1 Smart Scheduling
-- **Recurring Alarms**: Schedule music daily, once, or on specific days of the week.
+- **Recurring Timers**: Schedule music daily, once, or on specific days of the week.
 - **Specific Date Support**: Set a one-time music event for a calendar date.
 - **Auto-Delete**: One-time schedules can be set to automatically delete themselves after triggering to keep the list clean.
 
 ### 2.2 Advanced Audio Engine
-- **Sunrise Alarm (Fade-In)**: Volume starts at 0% and gradually ramps up over 30 seconds for a gentle wake-up experience.
+- **Sunrise Mode (Fade-In)**: Volume starts at 0% and gradually ramps up over 30 seconds for a gentle wake-up experience.
 - **Sleep Timer**: Automatically stops playback after a user-defined duration (0-120 mins).
 - **Volume Boost**: System-level volume fine-tuning within the app.
-- **High-Priority Channel**: Uses the `ALARM` audio usage category to bypass standard media silencers.
+- **High-Priority Channel**: Uses a prioritized audio usage category to bypass standard media silencers.
 
 ### 2.3 User Interface
 - **Dynamic Home Tabs**: Users can toggle visibility of "Tracks", "Playlists", and "Albums" tabs in settings.
-- **Full-Screen Alarm**: A dedicated high-visibility screen appears when a scheduled playlist triggers, even over the lock screen.
+- **Full-Screen Timer UI**: A dedicated high-visibility screen appears when a scheduled playlist triggers, even over the lock screen.
 - **Live Calendar View**: See all upcoming events in a list or filter by specific dates.
 
 ### 2.4 Performance & Battery
@@ -55,9 +55,9 @@ PlayTime is a smart music player designed for scheduled playback. It allows user
 
 ## 3. Scheduling & Queue Logic
 - **Maximum Schedules**: No hard limit (limited only by phone storage). Efficiently handles 1000+ schedules via Room database indexing.
-- **Simultaneous Alarms**: If two playlists trigger at the same minute, the most recent one will **replace** the previous playback. Two songs will never play at the same time.
+- **Simultaneous Timers**: If two playlists trigger at the same minute, the most recent one will **replace** the previous playback. Two songs will never play at the same time.
 - **Time Zone Handling**: 
-  - **Auto-Adjust**: Alarms are scheduled using system time. If the user changes timezones, the alarm will still trigger at the "local" time set (e.g., 8:00 AM becomes 8:00 AM in the new zone).
+  - **Auto-Adjust**: Schedules are set using system time. If the user changes timezones, the timer will still trigger at the "local" time set (e.g., 8:00 AM becomes 8:00 AM in the new zone).
   - **DST**: Handled automatically by the Android system `Calendar` API.
 
 ## 4. Music Playback Behavior
@@ -70,10 +70,10 @@ PlayTime is a smart music player designed for scheduled playback. It allows user
   - **Phone Calls**: Music automatically pauses during a call and resumes after.
   - **Navigation**: Music volume "ducks" (lowers) when navigation instructions play.
 
-## 5. Alarm & Notification features
-- **Alarm Screen Actions**: 
+## 5. Scheduled Playback & Notification features
+- **Timer Screen Actions**: 
   - **Stop**: Ends playback and closes the service.
-  - **Dismiss**: Closes the alarm screen but continues music in the background.
+  - **Dismiss**: Closes the timer screen but continues music in the background.
   - **Snooze**: Not implemented in v1.0.0 (planned for future update).
 - **Notification Controls**: Persistent while playing. Includes Play, Pause, Stop, Previous, and Next track controls. Includes a progress bar.
 
@@ -84,22 +84,24 @@ PlayTime is a smart music player designed for scheduled playback. It allows user
 - **Update**: Connects to `https://raw.githubusercontent.com/thadurbharath/playtime/master/update.json`.
 
 ## 7. Edge Cases & Recovery
-- **Device Reboot**: Alarms are automatically rescheduled on boot (requires `RECEIVE_BOOT_COMPLETED`).
+- **Device Reboot**: Schedules are automatically restored on boot.
 - **Manual Time Change**: App listens for system time changes and refreshes schedules.
-- **Battery Saver**: If "No Restrictions" is not set, alarms may be delayed by up to 10 minutes depending on manufacturer.
-- **Airplane Mode**: Alarms trigger normally (local files only).
+- **Battery Saver**: If "No Restrictions" is not set, timers may be delayed by up to 10 minutes depending on manufacturer.
+- **Airplane Mode**: Schedules trigger normally (local files only).
 
 ## 8. Permissions Summary
 The app requests the following for full functionality:
-- `POST_NOTIFICATIONS`: To show the player and alarm alerts.
+- `POST_NOTIFICATIONS`: To show the player and schedule alerts.
 - `READ_MEDIA_AUDIO` / `READ_EXTERNAL_STORAGE`: To access your music library.
 - `SCHEDULE_EXACT_ALARM`: For precise timing.
-- `USE_FULL_SCREEN_INTENT`: To show the alarm over the lock screen.
-- `WAKE_LOCK`: To prevent the CPU from sleeping during the alarm trigger.
-- `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`: To ensure MIUI doesn't freeze the app.
-- `RECEIVE_BOOT_COMPLETED`: To restore alarms after a restart.
+- `USE_FULL_SCREEN_INTENT`: To show the timer UI over the lock screen.
+- `WAKE_LOCK`: To prevent the CPU from sleeping during trigger.
+- `RECEIVE_BOOT_COMPLETED`: To restore schedules after a restart.
 - `REQUEST_INSTALL_PACKAGES`: For in-app updates.
 
+---
+
+# Cross-Device Testing Checklist
 
 Use this checklist to ensure the app works perfectly on devices from different manufacturers (Samsung, Google, OnePlus, etc.).
 
@@ -107,24 +109,24 @@ Use this checklist to ensure the app works perfectly on devices from different m
 - [ ] App installs without "User Restricted" errors.
 - [ ] Notification permission is requested and granted.
 - [ ] Media/Storage permission correctly loads local `.mp3` or `.wav` files.
-- [ ] **Exact Alarm** permission is granted in system settings (Android 12+).
+- [ ] **Exact Schedule** permission is granted in system settings (Android 12+).
 
 ## 2. Scheduling Reliability
-- [ ] **Lock Screen Trigger**: Schedule an alarm for 2 minutes away, lock the phone, and wait. Does the `AlarmActivity` appear over the lock screen?
+- [ ] **Lock Screen Trigger**: Schedule a timer for 2 minutes away, lock the phone, and wait. Does the `AlarmActivity` appear over the lock screen?
 - [ ] **Precision**: Does the music start within +/- 5 seconds of the scheduled time?
-- [ ] **Recurring Logic**: Does a "Daily" alarm reschedule itself for the next day after playing?
-- [ ] **Auto-Delete**: Does a "Once" alarm with auto-delete enabled disappear from the list after playing?
+- [ ] **Recurring Logic**: Does a "Daily" timer reschedule itself for the next day after playing?
+- [ ] **Auto-Delete**: Does a "Once" schedule with auto-delete enabled disappear from the list after playing?
 
 ## 3. Audio & Service Behavior
-- [ ] **Audio Channel**: Does the music play through the "Alarm" volume slider (verify by adjusting volume during playback)?
+- [ ] **Audio Channel**: Does the music play through the correctly prioritized volume slider?
 - [ ] **Fade-In**: If enabled, is the start of the song quiet and gradually getting louder?
 - [ ] **Sleep Timer**: Set to 1 min. Does the music stop and the notification disappear after 60 seconds?
 - [ ] **Background Survival**: Does playback continue if you navigate to other apps (YouTube, Chrome)?
 
 ## 4. Manufacturer-Specific (Critical)
-- [ ] **Redmi/Xiaomi**: Verify "Auto-start" is needed for the alarm to trigger.
+- [ ] **Redmi/Xiaomi**: Verify "Auto-start" is needed for the timer to trigger.
 - [ ] **Samsung**: Verify "Battery Optimization" doesn't kill the service after 10 minutes of screen-off.
-- [ ] **OnePlus**: Check if "Advanced Optimization" in battery settings delays the `AlarmManager`.
+- [ ] **OnePlus**: Check if "Advanced Optimization" in battery settings delays the trigger.
 
 ## 5. UI/UX Consistency
 - [ ] **Dark Mode**: Switch system theme. Does the app follow correctly (or follow manual setting)?

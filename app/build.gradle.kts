@@ -16,8 +16,6 @@ android {
         applicationId = "com.example.sample1"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.2"
         versionCode = 4
         versionName = "1.1.4"
 
@@ -61,6 +59,7 @@ dependencies {
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.ui)
     implementation(libs.material)
+    implementation(libs.coil.compose)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

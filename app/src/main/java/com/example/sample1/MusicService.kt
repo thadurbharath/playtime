@@ -1,5 +1,7 @@
 package com.example.sample1
 
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -27,6 +29,12 @@ import androidx.media3.session.MediaStyleNotificationHelper
 import kotlinx.coroutines.*
 import java.util.concurrent.TimeUnit
 
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.DefaultDataSource
+import android.net.wifi.WifiManager
+import android.os.PowerManager
+
 class MusicService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private lateinit var exoPlayer: ExoPlayer
@@ -36,6 +44,19 @@ class MusicService : MediaSessionService() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var fadeJob: Job? = null
     private var sleepJob: Job? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var pendingLinkOnUnlock: String? = null
+
+    private val screenUnlockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_USER_PRESENT) {
+                pendingLinkOnUnlock?.let { uri ->
+                    triggerExternalLink(uri)
+                    pendingLinkOnUnlock = null
+                }
+            }
+        }
+    }
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "volume_boost") {
@@ -47,9 +68,39 @@ class MusicService : MediaSessionService() {
 
     private fun applyAudioSettings() {
         val boost = prefs.getFloat("volume_boost", 1.0f)
-        // If not currently fading, apply the boost directly
         if (fadeJob?.isActive != true) {
             exoPlayer.volume = boost
+        }
+    }
+
+    private fun isExternalPlatform(uri: String): Boolean {
+        return uri.contains("youtube.com") || 
+               uri.contains("youtu.be") || 
+               uri.contains("spotify.com") ||
+               uri.contains("music.apple.com")
+    }
+
+    private fun triggerExternalLink(uri: String) {
+        if (uri.startsWith("http") && isExternalPlatform(uri)) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val isScreenOn = powerManager.isInteractive
+
+            if (!isScreenOn) {
+                // If screen is off, don't trigger yet, wait for unlock
+                pendingLinkOnUnlock = uri
+                Log.d("MusicService", "Screen is OFF. Delaying link trigger until unlock: $uri")
+                return
+            }
+
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                Log.d("MusicService", "Triggered external link: $uri")
+            } catch (e: Exception) {
+                Log.e("MusicService", "Failed to open external link", e)
+            }
         }
     }
 
@@ -59,7 +110,7 @@ class MusicService : MediaSessionService() {
         fadeJob?.cancel()
         fadeJob = serviceScope.launch {
             val targetVolume = prefs.getFloat("volume_boost", 1.0f)
-            val durationMs = 30000L // 30 seconds fade
+            val durationMs = 30000L
             val intervalMs = 500L
             val steps = durationMs / intervalMs
             val volumeStep = targetVolume / steps
@@ -88,6 +139,7 @@ class MusicService : MediaSessionService() {
     companion object {
         const val CHANNEL_ID = "music_service_channel"
         const val NOTIFICATION_ID = 1001
+        const val ACTION_OPEN_LINK = "com.example.sample1.OPEN_LINK"
     }
 
     override fun onCreate() {
@@ -95,15 +147,30 @@ class MusicService : MediaSessionService() {
         prefs = getSharedPreferences("playtime_settings", Context.MODE_PRIVATE)
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
+        val filter = IntentFilter(Intent.ACTION_USER_PRESENT)
+        registerReceiver(screenUnlockReceiver, filter)
+
+        wifiLock = (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)
+            .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "PlayTime:WiFiLock")
+
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setUserAgent("PlayTime/1.1.4 (Android)")
+            .setConnectTimeoutMs(20000)
+            .setReadTimeoutMs(20000)
+
+        val dataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
+
         exoPlayer = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .build(),
-                false // Disable automatic audio focus handling for non-media usage compatibility
+                true
             )
-            .setWakeMode(C.WAKE_MODE_NONE)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
         
         val intent = Intent(this, MainActivity::class.java)
@@ -114,37 +181,80 @@ class MusicService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, exoPlayer)
             .setSessionActivity(pendingIntent)
+            .setCallback(object : MediaSession.Callback {
+                override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
+                    return MediaSession.ConnectionResult.accept(
+                        MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS,
+                        MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+                    )
+                }
+                
+                override fun onPostConnect(session: MediaSession, controller: MediaSession.ControllerInfo) {
+                    super.onPostConnect(session, controller)
+                    updateNotification(isFromAlarmSession, currentPlaylistName)
+                }
+
+                override fun onPlayerCommandRequest(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    playerCommand: Int
+                ): Int {
+                    // Force prepare if trying to play or skip from idle/error state (links)
+                    if (playerCommand == Player.COMMAND_PLAY_PAUSE || 
+                        playerCommand == Player.COMMAND_SEEK_TO_NEXT || 
+                        playerCommand == Player.COMMAND_SEEK_TO_PREVIOUS) {
+                        if (exoPlayer.playbackState == Player.STATE_IDLE || exoPlayer.playerError != null) {
+                            exoPlayer.prepare()
+                        }
+                    }
+                    return super.onPlayerCommandRequest(session, controller, playerCommand)
+                }
+            })
             .build()
             
         exoPlayer.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
-                    Log.d("MusicService", "Playlist finished, stopping service.")
                     exoPlayer.stop()
                     exoPlayer.clearMediaItems()
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
+                
+                if (playbackState == Player.STATE_READY && exoPlayer.playWhenReady) {
+                    if (wifiLock?.isHeld == false) wifiLock?.acquire()
+                } else if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
+                    if (wifiLock?.isHeld == true) wifiLock?.release()
+                }
+                
                 updateNotification(isFromAlarmSession, currentPlaylistName)
             }
 
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (!isPlaying && exoPlayer.playbackState != Player.STATE_BUFFERING) {
-                    // If player stops playing, remove foreground and stop service to save battery
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
+            override fun onIsPlayingChanged(playing: Boolean) {
+                if (!playing && exoPlayer.playbackState != Player.STATE_BUFFERING) {
+                    // When paused, stop foreground to make notification swipeable, but DON'T stopSelf
+                    // so the app can still resume playback.
+                    stopForeground(STOP_FOREGROUND_DETACH)
+                    updateNotification(isFromAlarmSession, currentPlaylistName)
                 } else {
                     updateNotification(isFromAlarmSession, currentPlaylistName)
                 }
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                // Update notification when track changes
+                val currentUri = exoPlayer.currentMediaItem?.mediaId ?: ""
+                if (isExternalPlatform(currentUri)) {
+                    triggerExternalLink(currentUri)
+                }
                 updateNotification(isFromAlarmSession, currentPlaylistName) 
             }
 
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                updateNotification(isFromAlarmSession, currentPlaylistName)
+            }
+
             override fun onPlayerError(error: PlaybackException) {
-                Log.e("MusicService", "ExoPlayer Error: ${error.message}", error)
+                updateNotification(isFromAlarmSession, currentPlaylistName)
             }
         })
             
@@ -153,112 +263,75 @@ class MusicService : MediaSessionService() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Music Player",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Used for background music playback and alarms"
+            val channel = NotificationChannel(CHANNEL_ID, "Music Player", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Used for background music playback and scheduled timers"
                 setSound(null, null)
                 enableVibration(true)
             }
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d("MusicService", "onStartCommand action: ${intent?.action}")
-        
-        if (intent == null) {
-            stopSelf()
-            return START_NOT_STICKY
+        if (intent == null) { stopSelf(); return START_NOT_STICKY }
+
+        when (intent.action) {
+            "STOP" -> {
+                exoPlayer.stop(); exoPlayer.clearMediaItems()
+                if (wifiLock?.isHeld == true) wifiLock?.release()
+                stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+                return START_NOT_STICKY
+            }
+            "PAUSE" -> {
+                exoPlayer.pause()
+                if (wifiLock?.isHeld == true) wifiLock?.release()
+                updateNotification(isFromAlarmSession, currentPlaylistName)
+                return START_NOT_STICKY
+            }
+            "PLAY" -> {
+                if (exoPlayer.playbackState == Player.STATE_IDLE || exoPlayer.playerError != null) {
+                    exoPlayer.prepare()
+                }
+                exoPlayer.play()
+                updateNotification(isFromAlarmSession, currentPlaylistName)
+                return START_NOT_STICKY
+            }
+            ACTION_OPEN_LINK -> {
+                intent.getStringExtra("link")?.let { triggerExternalLink(it) }
+                return START_NOT_STICKY
+            }
         }
 
-        if (intent.action == "STOP") {
-            exoPlayer.stop()
-            exoPlayer.clearMediaItems()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        if (intent.action == "PAUSE") {
-            exoPlayer.pause()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        if (intent.action == "PLAY") {
-            exoPlayer.play()
-            updateNotification(isFromAlarmSession, currentPlaylistName)
-            return START_NOT_STICKY
-        }
-
-        // Always show a notification if started by alarm or if playing
         isFromAlarmSession = intent.action == "START_FROM_ALARM"
         currentPlaylistName = intent.getStringExtra("playlistName") ?: "PlayTime"
-        
-        // Show notification IMMEDIATELY to satisfy foreground service requirements
         updateNotification(isFromAlarmSession, currentPlaylistName)
 
-        if (isFromAlarmSession) {
-            // For scheduled alarms, we ensure repeat mode is OFF so it hits STATE_ENDED eventually
-            exoPlayer.repeatMode = Player.REPEAT_MODE_OFF
-        }
+        if (isFromAlarmSession) exoPlayer.repeatMode = Player.REPEAT_MODE_OFF
 
         val uris = intent.getStringArrayExtra("songUris")
         val titles = intent.getStringArrayExtra("songTitles")
         val startIndex = intent.getIntExtra("startIndex", 0)
         
         if (uris != null && titles != null && uris.isNotEmpty()) {
-            Log.d("MusicService", "Loading ${uris.size} songs starting at $startIndex")
-            
-            exoPlayer.stop()
-            exoPlayer.clearMediaItems()
+            exoPlayer.stop(); exoPlayer.clearMediaItems()
             for (i in uris.indices) {
-                try {
-                    val mediaMetadata = MediaMetadata.Builder()
-                        .setTitle(titles[i])
-                        .setDisplayTitle(titles[i])
-                        .setArtist(if (isFromAlarmSession) "Playlist: $currentPlaylistName" else "PlayTime")
-                        .setAlbumTitle(currentPlaylistName)
-                        .build()
-                    val mediaItem = MediaItem.Builder()
-                        .setMediaId(uris[i])
-                        .setUri(Uri.parse(uris[i]))
-                        .setMediaMetadata(mediaMetadata)
-                        .build()
-                    exoPlayer.addMediaItem(mediaItem)
-                } catch (e: Exception) {
-                    Log.e("MusicService", "Failed to add media item: ${uris[i]}", e)
-                }
+                val isExternal = isExternalPlatform(uris[i])
+                val mediaMetadata = MediaMetadata.Builder()
+                    .setTitle(titles[i])
+                    .setArtist(if (isFromAlarmSession) "Playlist: $currentPlaylistName" else "PlayTime")
+                    .setAlbumTitle(if (isExternal) "Platform Link (Tap Launch)" else currentPlaylistName)
+                    .build()
+                exoPlayer.addMediaItem(MediaItem.Builder().setMediaId(uris[i]).setUri(Uri.parse(uris[i])).setMediaMetadata(mediaMetadata).build())
             }
-            exoPlayer.seekTo(startIndex, 0L)
-            exoPlayer.prepare()
-            
-            // On Redmi/MIUI, sometimes the system blocks play() if called too quickly 
-            // after startForeground. A small delay or explicit playWhenReady can help.
-            exoPlayer.playWhenReady = true
-            exoPlayer.play()
-            
-            if (isFromAlarmSession) {
-                startFadeIn()
-            }
+            exoPlayer.seekTo(startIndex, 0L); exoPlayer.prepare(); exoPlayer.playWhenReady = true; exoPlayer.play()
+            if (isFromAlarmSession) startFadeIn()
             updateSleepTimer()
-            
-            // Update notification again to show the title of the first song
             updateNotification(isFromAlarmSession, currentPlaylistName)
         } else if (isFromAlarmSession) {
-            // Started from alarm but no songs? Stop.
-            Log.w("MusicService", "Started from alarm but no songs provided.")
             stopSelf()
         } else if (exoPlayer.mediaItemCount > 0) {
-            // Already have songs (maybe just a simple start), update notification
             updateNotification(isFromAlarmSession, currentPlaylistName)
         } else if (!exoPlayer.isPlaying) {
-            // No songs and not playing anything, stop.
             stopSelf()
         }
         
@@ -269,62 +342,47 @@ class MusicService : MediaSessionService() {
     @UnstableApi
     private fun updateNotification(isFromAlarm: Boolean, playlistName: String) {
         val session = mediaSession ?: return
-        
+        val currentItem = exoPlayer.currentMediaItem
+        val currentUri = currentItem?.mediaId ?: ""
+        val isExternal = isExternalPlatform(currentUri)
+
         val intentToOpen = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, intentToOpen, 
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val pendingIntent = PendingIntent.getActivity(this, 0, intentToOpen, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(if (isFromAlarm) "Scheduled Playlist: $playlistName" else "PlayTime")
-            .setContentText(exoPlayer.currentMediaItem?.mediaMetadata?.title ?: "Enjoy your music")
+            .setContentText(currentItem?.mediaMetadata?.title ?: "Enjoy your music")
             .setSmallIcon(R.drawable.ic_play_notification)
-            .setOngoing(exoPlayer.isPlaying)
+            .setOngoing(exoPlayer.isPlaying || isExternal)
             .setCategory(if (isFromAlarm) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_TRANSPORT)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
             .setStyle(MediaStyleNotificationHelper.MediaStyle(session))
 
+        if (isExternal) {
+            val openIntent = Intent(this, MusicService::class.java).apply { action = ACTION_OPEN_LINK; putExtra("link", currentUri) }
+            val openPendingIntent = PendingIntent.getService(this, 2, openIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            builder.addAction(R.drawable.ic_play_notification, "Launch App", openPendingIntent)
+        }
+
         if (isFromAlarm) {
-            val alarmIntent = Intent(this, AlarmActivity::class.java).apply {
-                putExtra("playlistName", playlistName)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-            val alarmPendingIntent = PendingIntent.getActivity(
-                this, 1, alarmIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
+            val alarmIntent = Intent(this, AlarmActivity::class.java).apply { putExtra("playlistName", playlistName); putExtra("currentUri", currentUri); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP) }
+            val alarmPendingIntent = PendingIntent.getActivity(this, 1, alarmIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             builder.setFullScreenIntent(alarmPendingIntent, true)
         }
 
-        val notification = builder.build()
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        else startForeground(NOTIFICATION_ID, builder.build())
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
-
-    override fun onDestroy() {
+    override fun onDestroy() { 
         serviceScope.cancel()
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
-        mediaSession?.run {
-            player.release()
-            release()
-            mediaSession = null
-        }
-        super.onDestroy()
+        try { unregisterReceiver(screenUnlockReceiver) } catch (e: Exception) {}
+        if (wifiLock?.isHeld == true) wifiLock?.release()
+        mediaSession?.run { player.release(); release(); mediaSession = null }; super.onDestroy() 
     }
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        exoPlayer.stop()
-        exoPlayer.clearMediaItems()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-    }
+    override fun onTaskRemoved(rootIntent: Intent?) { exoPlayer.stop(); exoPlayer.clearMediaItems(); if (wifiLock?.isHeld == true) wifiLock?.release(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
 }
